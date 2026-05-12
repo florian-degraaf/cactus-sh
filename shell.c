@@ -164,19 +164,6 @@ int launch(char **args)
     return 1;
 }
 
-int pipe_detection(char **args)
-{
-    for (int i = 0; i < sizeof(args); i++)
-    {
-        if (strcmp(args[i], "|") == 0)
-        {
-            printf("There is a pipe!\n");
-            return 0;
-        }
-    }
-    return 1;
-}
-
 int cactus_help(char **args);
 int cactus_cd(char **args);
 int cactus_exit(char **args);
