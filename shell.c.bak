@@ -1,0 +1,258 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h> // needed for strtok to work properly
+#include <unistd.h>
+#include <sys/wait.h>
+
+/* function returns a string, so basically a pointer to a char
+define allows you to create a constant/macro, which will be replaced by its value by the compiler at every point where its used
+note how it does not have a type, and also no memory! It also cannot be modified, as it's not stored anywhere, but rather replaced during compilation
+I was struggling to understand why and when you should use RL_BUFFSIZE and when you should use BUFFSIZE:
+- Basically RL_BUFFSIZE is the growth step/chunk size
+- but buffsize is the actual size of the buffer
+
+Also apparently all of this could be done a lot easier with getline(), but i wanted to learn how this works so no shortcuts here!
+*/
+#define RL_BUFFSIZE 1024
+char *read_line(){
+    int buffsize = RL_BUFFSIZE;
+    char *buffer = malloc(sizeof(char)*buffsize);
+    int pos = 0;
+    int c; //c is the character we read, stored as an int as the EOF is an int, thus in order to check it you must use an int. 
+    while(1){
+        c = getchar();
+        
+        if (!buffer){
+            fprintf(stderr, "shell: buffer allocation error\n");
+            exit(EXIT_FAILURE);
+        }
+        
+        if (c == EOF || c == '\n'){
+            buffer[pos] = '\0'; 
+            return buffer;
+        } else {
+            buffer[pos] = c;
+        }
+        pos++;
+
+        if (pos >= buffsize){
+            buffsize += RL_BUFFSIZE;
+            buffer = realloc(buffer, buffsize);
+            if (!buffer){
+                fprintf(stderr, "shell: buffer allocation error\n");
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+
+}
+
+/* the tokens are basically just pointers to each of the arguments, with a \0 at the end. Starting buffer size of 32 seems reasonable.
+The delimeters are the following:
+" " Whitespace
+\t tab
+\r carriage return (left edge of current line)
+\n newline
+\a legacy thing which makes the terminal beep sound
+*/
+#define TOK_BUFFSIZE 32
+#define TOK_DELIM " \t\r\n\a"
+char **parse_line(char *line, char *delim){
+    int buffsize = TOK_BUFFSIZE;
+    char **tokens = malloc(sizeof(char*)*buffsize);
+    char *token;
+    int pos = 0;
+
+    if (!tokens){
+        fprintf(stderr, "shell: buffer allocation error\n");
+        exit(EXIT_FAILURE);
+    }
+    token = strtok(line, delim);
+    while (token != NULL){
+        /* for tokenization, we'll be using strtok. strtok returns a pointer to the beginning of the token, and puts a \0 at the end, so it modifies the original string.
+        It only gives the first token, after which you have to call it again with NULL, to tell it to not use a new string but to give you the next token of the initial string.
+        Bit of a weird function, but that's how it works i guess.*/
+
+	tokens[pos] = token;
+        pos++;
+
+        if (pos >= buffsize){
+            buffsize += TOK_BUFFSIZE;
+            tokens = realloc(tokens, sizeof(char*)*buffsize);
+            if (!tokens){
+                fprintf(stderr, "shell: buffer allocation error\n");
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        token = strtok(NULL, delim); 
+    }
+
+    tokens[pos] = NULL;
+    return tokens;
+}
+
+int launch(char **args){
+    pid_t pid; //child process ID
+    pid_t wpid; //return value of waitpid, which when succesful returns the PID of the process that exited, or -1 if an error occurs
+    int status; //represents the status of the child process, whether it exited normally, was killed, paused, etc.
+    pid = fork();
+
+    if (pid == 0){
+	//child
+        if (execvp(args[0], args) == -1){
+	    perror("shell"); //using perror prints the "string":error message, along with actual error code information etc. fprintf just prints an error message without any os error message, just your custom message
+	}
+	exit(EXIT_FAILURE); // the reason this exit() comes after and outside the IF condition, is because the execvp only returns a value, and returns to this code if there's an error, otherwise, the child process never comes back to this code and thus, the exit would never be executed.
+    } else if (pid < 0){
+        perror("shell");
+    } else {
+	//parent
+	do {
+	    wpid = waitpid(pid, &status, WUNTRACED); //&status tells it to write status information in the memory address of the status int we declared earlier
+	    // the WUNTRACED is a flag, which tells it to return even if the child is stopped, not just when it exits, apparently good practice -_o_-
+	} while (!WIFEXITED(status) && !WIFSIGNALED(status)); //two macros, which tell you if process was exited normally or killed, respectively, basically keep waiting until one of them is true
+    }
+
+    return 1;
+}
+
+int pipe_detection(char **args){
+    for (int i = 0; i < sizeof(args); i++){
+	if (strcmp(args[i], "|") == 0){
+	    printf("There is a pipe!\n");
+	    return 0;
+	}
+    }
+    return 1;
+}
+
+int cactus_help(char **args);
+int cactus_cd(char **args);
+int cactus_exit(char **args);
+
+char *builtin_str[] = {
+    "help",
+    "cd",
+    "exit",
+};
+
+int (*builtin_func[])(char **) = {
+    &cactus_help,
+    &cactus_cd,
+    &cactus_exit,
+};
+
+int num_builtins(){
+    return sizeof(builtin_str) / sizeof(char *);
+}
+
+int cactus_help(char **args){
+    int i;
+    printf("Welcome to cactus-sh. This is a very basic shell implementation, written in C.\nThis was made to learn C and the way UNIX processes work, it's not suited for actual use.\n\n");
+    printf("List of built-ins:\n");
+    for (i = 0; i < num_builtins(); i++) {
+	printf("%s\n",builtin_str[i]);
+    }
+    printf("\n");
+    return 1;
+}
+
+int cactus_cd(char **args){
+    if (args[1] == NULL) {
+	fprintf(stderr, "shell: no arguments provided for cd command");
+    } else {
+	if (chdir(args[1]) != 0){
+	    perror("shell");
+	}
+    }
+    int buffersize = 64;
+    char buffer[buffersize];
+    printf("Current working directory: %s\n",getcwd(buffer, buffersize));
+    return 1;
+}
+int cactus_exit(char **args){
+    return 0;
+}
+
+//returns int as that will be our status variable!
+int execute(char **args){
+    if (args[0] == NULL) {
+        return 1;
+    }
+
+    for (int i=0; i < num_builtins(); i++){
+	if(strcmp(args[0], builtin_str[i]) == 0) {
+	    return (*builtin_func[i])(args);
+    	}
+    }
+
+    return launch(args);
+}
+
+void welcome(void){
+    char *clear_args[] = {"clear", NULL};
+    char *figlet_args[4];
+    char *jp2a_args[6];
+    char *help_args[] = {"help", NULL};
+
+    launch(clear_args);
+
+    figlet_args[0] = "figlet";
+    figlet_args[1] = "cactus-sh";
+    figlet_args[2] = "-k";
+    figlet_args[3] = NULL;
+
+    launch(figlet_args);
+
+    jp2a_args[0] = "jp2a";
+    jp2a_args[1] = "--height=20";
+    jp2a_args[2] = "--invert";
+    jp2a_args[3] = "--colors";
+    jp2a_args[4] = "static/cactus.png";
+    jp2a_args[5] = NULL;
+
+    launch(jp2a_args);
+
+    execute(help_args);
+}
+
+void loop(void){ //using (void) to explicitly state that the function takes no arguments, () would work just as well but implicit.
+    char *line; //string
+    char **args; //array of strings, the same as saying char *args[], basically a pointer to a pointer to a string;
+    int status;
+    char **args_list;
+
+    welcome();
+
+    /* we're using do while instead of while, as it executes the process once and then check the condition,
+    a while loop would first check the condition, and the start the first loop, we need it to execute at least once.
+    This allows us to initialize status in the first loop, then use it in the while loop*/
+    do {
+	printf("$ ");
+        line = read_line();
+        args_list = parse_line(line, "|");
+	for(int i=0; i<sizeof(args_list);i++){
+	    printf("Item number %d : %s",i,args_list[i]);
+	    args = parse_line(args_list[i], TOK_DELIM);
+	    status = execute(args);
+	    free(args);
+	    if (status == 0){ return; }
+	}
+	//cactus_pipe(args);
+        free(line);
+	free(args_list);
+    } while(status);
+}
+
+/* While so far i've always used int main() without arguments, in this case we need to use argc and argv.
+argc is argument counter: the number of arguments the program was launched with. At least 1, as the program name is the first argument.
+argv is argument vector: an array of strings, with each string being an argument
+We need them as a shell can be launched with arguments, like pretty much any UNIX program
+*/
+int main(int argc, char *argv[]){
+    loop();
+    
+    return EXIT_SUCCESS; 
+}
+
