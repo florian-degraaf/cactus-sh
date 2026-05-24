@@ -109,28 +109,11 @@ int launch(char **args)
     pid_t pid;  // child process ID
     pid_t wpid; // return value of waitpid, which when succesful returns the PID of the process that exited, or -1 if an error occurs
     int status; // represents the status of the child process, whether it exited normally, was killed, paused, etc.
-    int fd[2];
-
-    if (pipe(fd) == -1)
-    {
-        perror("shell: Error when opening pipe");
-        return 1;
-    }
 
     pid = fork();
 
     if (pid == 0)
     {
-        int y;
-        close(fd[1]); //close write side (not used by child)
-        // child
-
-        if (read(fd[0], &y, sizeof(int)) == -1) {
-            printf("Error reading pipe.\n");
-            return 1;
-        }
-        printf("Pipe content retrieved: %d", y);
-        close(fd[0]);
         if (execvp(args[0], args) == -1)
         {
             perror("shell"); // using perror prints the "string":error message, along with actual error code information etc. fprintf just prints an error message without any os error message, just your custom message
@@ -143,16 +126,6 @@ int launch(char **args)
     }
     else
     {
-        // parent
-        int x = 5;
-        close(fd[0]); //close read side (not used by parent)
-        if (write(fd[1], &x, sizeof(int)) == -1) {
-            printf("Error writing pipe. \n");
-            return 1;
-        }
-        close(fd[1]);
-        //wait(NULL);
-        
         do
         {
             wpid = waitpid(pid, &status, WUNTRACED); //&status tells it to write status information in the memory address of the status int we declared earlier
@@ -160,6 +133,123 @@ int launch(char **args)
         } while (!WIFEXITED(status) && !WIFSIGNALED(status)); // two macros, which tell you if process was exited normally or killed, respectively, basically keep waiting until one of them is true
         
         }
+
+    return 1;
+}
+
+int pipe_detection(char *args){
+    int pipe_count = 0;
+    for (int i = 0; args[i]; i++){
+        if (args[i] == '|'){
+            pipe_count++;
+        }
+    }
+    return pipe_count;
+}
+
+
+//this is the function that handles the actual creating of pipes and launching the processes which uses them
+// currently it is limited to only handle standard commands, not builtins, might have to add that later on.
+int execute_pipe(char *line)
+{
+    char **commands;
+    char **args;
+    int command_count = 0;
+    int fd[2];
+    int prev_fd = -1;
+    pid_t pid;
+
+    commands = parse_line(line, "|");
+
+    // coutning how many commands we need to execute
+    while (commands[command_count] != NULL)
+    {
+        command_count++;
+    }
+
+    for (int i = 0; i < command_count; i++)
+    {
+        //parsing like we would any other command (except for builtins)
+        args = parse_line(commands[i], TOK_DELIM);
+
+        if (args[0] == NULL)
+        {
+            free(args);
+            continue;
+        }
+
+        //we need to create a pipe for every command except the last one, as that one doesn't transmit its data to any other function,
+        //but rather directly to stdout
+        if (i < command_count - 1)
+        {
+            if (pipe(fd) == -1)
+            {
+                perror("shell: pipe error");
+                return 1;
+            }
+        }
+
+        pid = fork();
+
+        if (pid == 0)
+        {
+            // child
+
+            // if this is not the first command, we read from the previous pipe
+            if (prev_fd != -1)
+            {
+                dup2(prev_fd, STDIN_FILENO);
+                close(prev_fd);
+            }
+
+            //if this is not the last command, we write it into the current pipe
+            if (i < command_count - 1)
+            {
+                close(fd[0]);
+                dup2(fd[1], STDOUT_FILENO);
+                close(fd[1]);
+            }
+
+            if (execvp(args[0], args) == -1)
+            {
+                perror("shell");
+            }
+
+            exit(EXIT_FAILURE);
+        }
+        else if (pid < 0)
+        {
+            perror("shell");
+            return 1;
+        }
+
+        // parent
+
+        if (prev_fd != -1)
+        {
+            close(prev_fd);
+        }
+
+        if (i < command_count - 1)
+        {
+            close(fd[1]);
+            prev_fd = fd[0];
+        }
+
+        free(args);
+    }
+
+    if (prev_fd != -1)
+    {
+        close(prev_fd);
+    }
+
+    for (int i = 0; i < command_count; i++)
+    {
+        wait(NULL);
+    }
+
+    free(commands);
 
     return 1;
 }
@@ -185,11 +275,52 @@ int num_builtins()
     return sizeof(builtin_str) / sizeof(char *);
 }
 
+void welcome_banner(void)
+{
+    printf(
+        "                   _                            _\n"
+        "  ___  __ _   ___ | |_  _   _  ___         ___ | |__\n"
+        " / __|/ _` | / __|| __|| | | |/ __| _____ / __|| '_ \\\n"
+        "| (__| (_| || (__ | |_ | |_| |\\__ \\|_____|\\__ \\| | | |\n"
+        " \\___|\\__,_| \\___| \\__| \\__,_||___/       |___/|_| |_|\n"
+        "\n"
+        "\n");
+
+    printf("\033[32m"); //print the cactus in green
+        
+    printf(
+        "                 .'.\n"
+        "                lldl'\n"
+        "         .c;.  .xddoc\n"
+        "         ddoc  .xdxol    .\n"
+        "         xdd;  .kxxdc   cdl.\n"
+        "         kdd,  .kxxd:   kdx;\n"
+        "        .kdx.  .kdxo,   xxxo\n"
+        "         xod'  ,kdxd'   dkxd\n"
+        "         ,ddxddxkdxd.   xkx:\n"
+        "           ';::dkdxx,.,lOkd.\n"
+        "               ;kdxxkkkkkl.\n"
+        "               ;kxxx ...\n"
+        "               ,kxxc\n"
+        "               ;kdd:\n"
+        "               ,kdd;\n"
+        "               .Oxd:\n"
+        "               .kxd:\n"
+        "                .,'.\n"
+        "\n"
+    );
+    printf("\033[0m"); //reset to default output color
+}
+
 int cactus_help(char **args)
 {
     int i;
+    printf("\033[H\033[J"); //clear the screen before printing anything, basically puts the cursor at the top left of the screen
+    // and then clears anything below that
+    welcome_banner();
     printf("Welcome to cactus-sh. This is a very basic shell implementation, written in C.\nThis was made to learn C and the way UNIX processes work, it's not suited for actual use.\n\n");
     printf("List of built-ins:\n");
+    
     for (i = 0; i < num_builtins(); i++)
     {
         printf("%s\n", builtin_str[i]);
@@ -240,65 +371,38 @@ int execute(char **args)
     return launch(args);
 }
 
-void welcome(void)
+void loop(void)// using (void) to explicitly state that the function takes no arguments, () would work just as well but implicit.
 {
-    char *clear_args[] = {"clear", NULL};
-    char *figlet_args[4];
-    char *jp2a_args[6];
+    char *line; // string
+    char **args; // array of strings, the same as saying char *args[], basically a pointer to a pointer to a string;
+    int status = 1;
+    int pcount;
     char *help_args[] = {"help", NULL};
 
-    launch(clear_args);
-
-    figlet_args[0] = "figlet";
-    figlet_args[1] = "cactus-sh";
-    figlet_args[2] = "-k";
-    figlet_args[3] = NULL;
-
-    launch(figlet_args);
-
-    jp2a_args[0] = "jp2a";
-    jp2a_args[1] = "--height=20";
-    jp2a_args[2] = "--invert";
-    jp2a_args[3] = "--colors";
-    jp2a_args[4] = "static/cactus.png";
-    jp2a_args[5] = NULL;
-
-    launch(jp2a_args);
-
     execute(help_args);
-}
-
-void loop(void)
-{                // using (void) to explicitly state that the function takes no arguments, () would work just as well but implicit.
-    char *line;  // string
-    char **args; // array of strings, the same as saying char *args[], basically a pointer to a pointer to a string;
-    int status;
-    char **args_list;
-
-    welcome();
-
     /* we're using do while instead of while, as it executes the process once and then check the condition,
     a while loop would first check the condition, and the start the first loop, we need it to execute at least once.
     This allows us to initialize status in the first loop, then use it in the while loop*/
     do
     {
-        printf("$ ");
+        printf("\033[32m$ \033[0m"); //print a green dollar sign, matches the theme of the cactus better
         line = read_line();
-        args_list = parse_line(line, "|");
-        for (int i = 0; i < sizeof(args_list); i++)
+
+        pcount = pipe_detection(line);
+
+        if (pcount > 0)
         {
-            printf("Item number %d : %s", i, args_list[i]);
-            args = parse_line(args_list[i], TOK_DELIM);
+            status = execute_pipe(line);
+        }
+        else
+        {
+            args = parse_line(line, TOK_DELIM);
             status = execute(args);
             free(args);
-            if (status == 0)
-            {
-                return;
-            }
         }
-        // cactus_pipe(args);
+
         free(line);
-        free(args_list);
+
     } while (status);
 }
 
