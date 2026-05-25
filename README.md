@@ -240,7 +240,7 @@ Some features that could be added in the future:
 
 ## Credits
 
-This project was heavily inspired by Stephen Brennan's tutorial:
+This tutorial helped me a lot when making this project:
 
 - [Write a Shell in C](https://brennan.io/2015/01/16/write-a-shell-in-c/)
 
