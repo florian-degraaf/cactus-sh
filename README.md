@@ -6,6 +6,8 @@ This project was created as a learning exercise to better understand how shells 
 
 > **Note:** This shell is not intended for real-world use. It is intentionally limited and exists mainly as an educational project.
 
+Full article: https://floriandegraaf.com/Projects/Custom-shell-written-in-C
+
 ---
 
 ## Features
